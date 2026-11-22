@@ -6,3 +6,7 @@ publish = false
 
 [dependencies]
 sha2 = "0.10"
+triton-vm = { version = "=9.0.0", optional = true }
+
+[features]
+zk = ["dep:triton-vm"]

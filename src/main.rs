@@ -1,8 +1,12 @@
+#![cfg_attr(feature = "zk", recursion_limit = "256")]
+
 mod commitment;
 mod encoding;
 mod fibonacci;
 mod field;
 mod proof;
+#[cfg(feature = "zk")]
+mod zk;
 
 use std::error::Error;
 use std::fs::File;
@@ -36,7 +40,11 @@ fn run(args: &[std::ffi::OsString]) -> Result<(), Box<dyn Error>> {
             println!("a[{last_index}] = {}", trace[last_index]);
             assert_eq!(trace[last_index], EXPECTED);
         }
-        [command] if command == "--help" || command == "-h" => println!("{USAGE}"),
+        [command] if command == "--help" || command == "-h" => {
+            println!("{USAGE}");
+            #[cfg(feature = "zk")]
+            println!("  stark-practice prove-zk <証明ファイル> <公開された末尾> （第2項は標準入力）\n  stark-practice verify-zk <証明ファイル> <公開された末尾>");
+        }
         [command, path] if command == "prove" => {
             let statement = Statement::new(DEFAULT_LOG_ROWS, EXPECTED, DEFAULT_QUERIES)?;
             let proof = prove(statement, WITNESS)?;
@@ -54,6 +62,32 @@ fn run(args: &[std::ffi::OsString]) -> Result<(), Box<dyn Error>> {
             let proof = Proof::read(statement, BufReader::new(File::open(path)?))?;
             verify(statement, &proof)?;
             println!("検証に成功しました。公開された末尾 = {end}");
+        }
+        #[cfg(feature = "zk")]
+        [command, path, end] if command == "prove-zk" => {
+            let end = end
+                .to_str()
+                .ok_or("末尾を10進数で指定してください")?
+                .parse()?;
+            // 秘密値をコマンドライン引数に含めず、標準入力から読み取る。
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            let second = line.trim().parse()?;
+            let proof = zk::prove(second, end)?;
+            let mut writer = BufWriter::new(File::create(path)?);
+            zk::write(&proof, &mut writer)?;
+            writer.flush()?;
+            println!("ゼロ知識証明を生成しました。公開された末尾 = {end}");
+        }
+        #[cfg(feature = "zk")]
+        [command, path, end] if command == "verify-zk" => {
+            let end = end
+                .to_str()
+                .ok_or("末尾を10進数で指定してください")?
+                .parse()?;
+            let proof = zk::read(File::open(path)?)?;
+            zk::verify(end, &proof)?;
+            println!("ゼロ知識証明の検証に成功しました。公開された末尾 = {end}");
         }
         [command] if command == "measure" => measure()?,
         _ => return Err(USAGE.into()),

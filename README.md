@@ -116,9 +116,45 @@ cargo run --quiet --release -- measure
 
 トレースが長くなると、LDEの木が深くなって1本の経路が長くなり、FRIの層も増えます。トレース長が一定なら、問い合わせが1件増えるごとに同じ数と長さの経路が追加されます。この形式では各経路を個別に格納するため、既定の例では認証経路が証明全体の約97%を占めます。
 
+## ゼロ知識版で証明を生成する
+
+`zk` 機能を有効にすると、同じ公開命題をTriton VMのzk-STARKで証明できます。証明者は第2項を標準入力で渡し、検証者は証明ファイルと公開された末尾を指定します。最初のビルドでは追加依存関係を取得します。リポジトリのルートでRust 1.89以降を使って実行してください。
+
+```sh
+printf '%s\n' 3141592 | cargo run --release --locked --features zk -- prove-zk target/fibonacci.zkproof 2338775057
+cargo run --release --locked --features zk -- verify-zk target/fibonacci.zkproof 2338775057
+```
+
+`3141592` は教材で公開されているサンプル値です。実際に秘密にしたい値はシェル履歴に残るコマンドに書かず、証明者の環境で標準入力に渡します。
+
+```mermaid
+flowchart LR
+    S["第2項（証明者の標準入力）"] --> P["prove-zk"]
+    P --> G["固定のTritonプログラムで漸化式を検査"]
+    G --> F["ランダム化したzk-STARK証明"]
+    F --> V["verify-zk"]
+    E["公開された末尾"] --> V
+    D["手元のプログラムのハッシュ"] --> V
+    V --> R["検証結果"]
+```
+
+Triton VMの有限体は教材の有限体と法が異なります。そこでVM内で各二乗を `x² = q·p + r`（`0 ≤ q,r < p`）として検査し、剰余を足し合わせて元のFibonacciSqを再現します。検証者は手元のプログラムからハッシュを計算し、公開された末尾と合わせて証明を検査します。公開されるトレースのパディング後の高さは固定しています。[ゼロ知識版の実装](src/zk.rs)・[Triton VMの仕様](https://docs.rs/triton-vm/9.0.0/triton_vm/)
+
+この版のゼロ知識性は、Triton VMのトレースランダム化とDEEP・FRIを含む証明プロトコルに依存します。論文をもとに既存の教材用FRIへ直接マスクを導入する案は、実装計画に記録しています。[実装計画](docs/plan.md)・[Triton VMの証明器](https://docs.rs/crate/triton-vm/9.0.0/source/src/stark.rs)
+
+### 1,023項の実測例
+
+ビルド済みのリリースバイナリを別プロセスで実行した際の計測です。時間には証明ファイルの読み書きとプロセスの起動を含みます。証明サイズや時間は実行ごとに変動します。
+
+| 証明方式 | 証明サイズ（B） | 生成（秒） | 検証（秒） |
+| --- | ---: | ---: | ---: |
+| 教材用STARK 101 | 117,136 | 0.163 | 0.006 |
+| Triton VMのzk-STARK | 931,232 | 17.084 | 0.021 |
+
+
 ## FlashProveとの関係
 
-AnthropicのFlashProveが証明するのは、コミット済みのモデルの重みから所定の推論結果が得られたことです。Merkle木でデータを固定し、Fiat–Shamir変換で検証者のチャレンジを導く考え方は、この教材と共通します。FlashProveの公式資料では推論の計算を扱うためにsumcheckやlookupも組み合わせています。ここで学ぶ対象はSTARK 101のFibonacciSqとFRIです。学習用の小さな有限体と公開される開示値を使う実装です。ゼロ知識化や実運用向けの安全性評価は実装範囲外です。[Anthropicの発表](https://www.anthropic.com/research/provable-inference)・[FlashProveのプロトコル仕様](https://github.com/anthropics/FlashProve/blob/main/docs/protocol.md)
+AnthropicのFlashProveが証明するのは、コミット済みのモデルの重みから所定の推論結果が得られたことです。Merkle木でデータを固定し、Fiat–Shamir変換で検証者のチャレンジを導く考え方は、この教材と共通します。FlashProveの公式資料では推論の計算を扱うためにsumcheckやlookupも組み合わせています。ここで学ぶ対象はSTARK 101のFibonacciSqとFRIです。既定のSTARK 101版は、学習用の小さな有限体と公開される開示値を使います。ゼロ知識の実行例はTriton VM版を参照してください。[Anthropicの発表](https://www.anthropic.com/research/provable-inference)・[FlashProveのプロトコル仕様](https://github.com/anthropics/FlashProve/blob/main/docs/protocol.md)
 
 ## 整形とテスト
 
@@ -128,4 +164,5 @@ AnthropicのFlashProveが証明するのは、コミット済みのモデルの�
 cargo fmt          # Rustコードを整形
 cargo fmt --check  # ファイルを書き換えずに整形を確認
 cargo test         # 数列・補間・FRI・証明の改変拒否を確認
+cargo test --release --locked --features zk  # VM内の漸化式・入力範囲・証明形式を確認
 ```
